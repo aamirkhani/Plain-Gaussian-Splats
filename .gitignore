@@ -1,0 +1,14 @@
+# datasets are licensed separately and must be downloaded, not redistributed
+data/
+notebook/data/
+# training artefacts (hundreds of MB)
+logs/
+*.pt
+*.ply
+*.mp4
+# python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.log
+jupyter.log

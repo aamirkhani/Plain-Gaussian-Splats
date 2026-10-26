@@ -1,0 +1,519 @@
+<title>Gaussian Splatting, trained on an integrated GPU</title>
+<style>
+:root{
+  --ink:#10151b; --ink-2:#1a222c; --line:#dbe2e8;
+  --paper:#f2f5f7; --card:#ffffff;
+  --fg:#10151b; --fg-dim:#5b6775; --fg-faint:#8a97a5;
+  --accent:#e0a013; --accent-soft:#fdf3dc;
+  --steel:#2f6d96; --good:#2f7a54; --bad:#b5352e;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --line:#28323d; --paper:#0b0f14; --card:#141b23;
+    --fg:#e8eef3; --fg-dim:#9aa8b6; --fg-faint:#6b7a89;
+    --accent:#f0b429; --accent-soft:#2a2113; --steel:#6aa8d0;
+    --good:#5cc08a; --bad:#e8716a;
+  }
+}
+:root[data-theme="dark"]{
+  --line:#28323d; --paper:#0b0f14; --card:#141b23;
+  --fg:#e8eef3; --fg-dim:#9aa8b6; --fg-faint:#6b7a89;
+  --accent:#f0b429; --accent-soft:#2a2113; --steel:#6aa8d0;
+  --good:#5cc08a; --bad:#e8716a;
+}
+:root[data-theme="light"]{
+  --line:#dbe2e8; --paper:#f2f5f7; --card:#ffffff;
+  --fg:#10151b; --fg-dim:#5b6775; --fg-faint:#8a97a5;
+  --accent:#e0a013; --accent-soft:#fdf3dc; --steel:#2f6d96;
+  --good:#2f7a54; --bad:#b5352e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--fg);font-family:var(--sans);
+  line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:clamp(20px,4vw,48px) clamp(16px,4vw,32px) 72px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--fg-faint)}
+h1{font-size:clamp(26px,4.4vw,42px);line-height:1.12;letter-spacing:-.022em;
+  font-weight:680;margin:10px 0 12px;text-wrap:balance;max-width:19ch}
+h2{font-size:clamp(17px,2.2vw,21px);letter-spacing:-.012em;font-weight:660;
+  margin:0 0 4px;text-wrap:balance}
+p{margin:0 0 14px;max-width:66ch;color:var(--fg-dim)}
+p strong{color:var(--fg);font-weight:620}
+header p{font-size:clamp(14px,1.7vw,16.5px)}
+section{margin-top:52px}
+.sechead{display:flex;align-items:baseline;gap:12px;border-top:1px solid var(--line);
+  padding-top:14px;margin-bottom:16px}
+.sechead .n{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.1em}
+
+/* ---- viewer ---- */
+.stage{border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--card)}
+.canvas-wrap{position:relative;background:#fff;aspect-ratio:16/10;min-height:300px}
+@media (max-width:640px){.canvas-wrap{aspect-ratio:4/3}}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+.hint{position:absolute;left:12px;top:12px;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.09em;text-transform:uppercase;color:#7b8694;background:rgba(255,255,255,.82);
+  padding:5px 9px;border-radius:3px;pointer-events:none;transition:opacity .5s}
+.boot{position:absolute;inset:0;display:grid;place-items:center;background:#fff;
+  font-family:var(--mono);font-size:12px;color:#7b8694;letter-spacing:.08em}
+.rail{display:flex;flex-wrap:wrap;gap:0;border-top:1px solid var(--line);background:var(--card)}
+.read{flex:1 1 92px;padding:9px 12px;border-right:1px solid var(--line)}
+.read:last-child{border-right:0}
+.read .k{font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--fg-faint);display:block}
+.read .v{font-family:var(--mono);font-size:14px;font-variant-numeric:tabular-nums;
+  color:var(--fg);margin-top:1px;display:block}
+.ctrl{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:11px 12px;
+  border-top:1px solid var(--line);background:var(--card)}
+.ctrl label{font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--fg-faint);white-space:nowrap}
+input[type=range]{flex:1 1 180px;min-width:130px;accent-color:var(--accent);height:18px}
+button{font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+  background:transparent;color:var(--fg-dim);border:1px solid var(--line);
+  padding:6px 11px;border-radius:3px;cursor:pointer}
+button:hover{border-color:var(--accent);color:var(--fg)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---- comparison ---- */
+.cmp{position:relative;border:1px solid var(--line);border-radius:4px;overflow:hidden;
+  background:#fff;max-width:720px}
+.cmp img{display:block;width:200%;max-width:none;height:auto}
+.cmp .clip{position:absolute;inset:0;overflow:hidden;width:50%;border-right:2px solid var(--accent)}
+.cmp .clip img{position:absolute;left:0;top:0}
+.cmp .tag{position:absolute;bottom:9px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.1em;text-transform:uppercase;background:rgba(255,255,255,.88);
+  color:#3c4651;padding:4px 8px;border-radius:3px}
+.cmp .tag.l{left:9px}.cmp .tag.r{right:9px}
+.cmp input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:ew-resize;margin:0}
+
+/* ---- data ---- */
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:4px}
+.tbl th{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--fg-faint);text-align:left;font-weight:400;padding:6px 10px 6px 0;
+  border-bottom:1px solid var(--line)}
+.tbl td{padding:8px 10px 8px 0;border-bottom:1px solid var(--line);color:var(--fg-dim)}
+.tbl td:first-child{color:var(--fg)}
+.tbl .num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;
+  padding-right:18px}
+.pill{font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+  padding:2px 7px;border-radius:2px;white-space:nowrap}
+.pill.y{background:var(--accent-soft);color:var(--accent)}
+.pill.n{color:var(--bad);border:1px solid currentColor}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:22px}
+.note{font-size:13px;color:var(--fg-faint);border-left:2px solid var(--accent);
+  padding-left:14px;margin-top:18px;max-width:62ch}
+code{font-family:var(--mono);font-size:.9em;color:var(--fg)}
+.scroll{overflow-x:auto}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">3D Gaussian Splatting · built from scratch · AMD Radeon 890M</span>
+  <h1>117,145 gaussians, trained on an integrated GPU.</h1>
+  <p>No CUDA. No custom kernels. A differentiable rasteriser written in plain PyTorch,
+  trained for 3.19 hours on a laptop iGPU sharing system memory — peak usage 1.41 GB.
+  <strong>Drag to orbit the result.</strong></p>
+</header>
+
+<div class="stage">
+  <div class="canvas-wrap">
+    <canvas id="gl"></canvas>
+    <div class="boot" id="boot">unpacking splats…</div>
+    <div class="hint" id="hint">drag to orbit · scroll to zoom</div>
+  </div>
+  <div class="rail">
+    <div class="read"><span class="k">splats drawn</span><span class="v" id="r-n">—</span></div>
+    <div class="read"><span class="k">frames / s</span><span class="v" id="r-fps">—</span></div>
+    <div class="read"><span class="k">azimuth</span><span class="v" id="r-az">—</span></div>
+    <div class="read"><span class="k">elevation</span><span class="v" id="r-el">—</span></div>
+    <div class="read"><span class="k">distance</span><span class="v" id="r-rad">—</span></div>
+    <div class="read"><span class="k">sort</span><span class="v" id="r-sort">—</span></div>
+  </div>
+  <div class="ctrl">
+    <label for="budget">Gaussians</label>
+    <input type="range" id="budget" min="200" max="__SPLAT_N__" value="__SPLAT_N__" step="100">
+    <button id="mode" type="button">Shape: gaussian</button>
+    <button id="zoomin" type="button">Zoom in</button>
+    <button id="zoomout" type="button">Out</button>
+    <button id="reset" type="button">Reset view</button>
+    <button id="ground" type="button">Ground: white</button>
+  </div>
+</div>
+
+<p class="note">Pull the <strong>Gaussians</strong> slider down and the bulldozer dissolves into
+the blobs it is actually made of. They are ordered by how much of the image each one carries,
+so the first few hundred sketch the silhouette and the last forty thousand are detail. That is
+what adaptive density control produced: it started from 50,000 random points in a cube.</p>
+
+<p class="note"><strong>To see individual splats:</strong> hit <em>Zoom in</em> a few times, then
+switch <em>Shape</em> from <em>gaussian</em> to <em>discs</em> or <em>outlines</em>. Gaussian is
+the honest render — alpha falls off as <code>exp(−½ dᵀΣ′⁻¹d)</code>, so neighbours blend and you
+cannot tell where one ends. Discs cut every splat off hard at 2σ and outlines draw only the rim,
+which turns the soft cloud into the thousands of overlapping ellipses it really is. Each ellipse
+is one 3D gaussian squashed through the projection Jacobian.</p>
+
+<section>
+  <div class="sechead"><span class="n">01</span><h2>Does it match reality?</h2></div>
+  <p>Left is the model rendering a camera angle it was <em>never trained on</em>; right is the
+  ground-truth render. Drag the divider. Test PSNR on this view: <strong>__CMP_PSNR__ dB</strong>.</p>
+  <div class="cmp" id="cmp">
+    <img src="data:image/jpeg;base64,__CMP_B64__" alt="model render beside ground truth">
+    <div class="clip" id="clip"><img src="data:image/jpeg;base64,__CMP_B64__" alt=""></div>
+    <span class="tag l">reconstruction</span>
+    <span class="tag r">ground truth</span>
+    <input type="range" id="slider" min="0" max="100" value="50" aria-label="comparison position">
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><span class="n">02</span><h2>What the hardware actually allowed</h2></div>
+  <p>The constraint was an integrated GPU with no private video memory and a 12 GB budget shared
+  with the CPU. Memory was never the problem — <strong>bandwidth</strong> was.</p>
+  <div class="grid">
+    <div>
+      <span class="eyebrow">Measured ceiling</span>
+      <table class="tbl">
+        <tr><td>DRAM bandwidth</td><td class="num">46 GB/s</td></tr>
+        <tr><td>fp32 peak</td><td class="num">5.9 TFLOP/s</td></tr>
+        <tr><td>Machine balance</td><td class="num">129 F/B</td></tr>
+        <tr><td>This kernel</td><td class="num">0.25 F/B</td></tr>
+      </table>
+      <p style="font-size:13px;margin-top:10px">Roughly 500× on the bandwidth-bound side, using
+      about 0.1% of the arithmetic budget. Matrix cores would have bought nothing.</p>
+    </div>
+    <div>
+      <span class="eyebrow">Training</span>
+      <table class="tbl">
+        <tr><td>Test PSNR</td><td class="num">27.80 dB</td></tr>
+        <tr><td>Gaussians</td><td class="num">117,145</td></tr>
+        <tr><td>Wall clock</td><td class="num">3.19 h</td></tr>
+        <tr><td>Peak memory</td><td class="num">1.41 GB</td></tr>
+      </table>
+      <p style="font-size:13px;margin-top:10px">7,000 iterations at 400×400, from a random point
+      cloud. The reference CUDA implementation runs 30,000 at 800×800.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><span class="n">03</span><h2>Four optimisations, one survivor</h2></div>
+  <p>Each variant was checked against the eager fp32 reference on <em>both</em> the image and the
+  gradients. That second column is the one that decided it.</p>
+  <div class="scroll">
+  <table class="tbl">
+    <thead><tr><th>Variant</th><th class="num">Speed</th><th class="num">Image err</th>
+      <th class="num">Gradient err</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>eager fp32</td><td class="num">1.00×</td><td class="num">—</td><td class="num">—</td><td>baseline</td></tr>
+      <tr><td>bf16, fp32 scan</td><td class="num">1.23×</td><td class="num">4.1e−02</td><td class="num">4.1e−01</td><td><span class="pill n">rejected</span></td></tr>
+      <tr><td>bf16, full</td><td class="num">1.40×</td><td class="num">5.0e−02</td><td class="num">4.1e−01</td><td><span class="pill n">rejected</span></td></tr>
+      <tr><td>power-of-two padding</td><td class="num">0.64×</td><td class="num">2.4e−07</td><td class="num">1.8e−06</td><td><span class="pill n">slower</span></td></tr>
+      <tr><td>Triton fusion, pointwise prefix</td><td class="num">1.86×</td><td class="num">3.6e−07</td><td class="num">5.5e−04</td><td><span class="pill y">adopted</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note">bf16 rendered a perfectly plausible image while carrying <strong>41% gradient
+  error</strong>. Checking only the forward pass would have shipped a “speedup” that quietly
+  degrades training. The cause was catastrophic cancellation: <code>dx = pixel − mean</code>
+  subtracts two numbers near 400 to get a value near 1, and bf16’s 8 mantissa bits are worth
+  ±1.6 px at that magnitude — larger than the answer.</p>
+</section>
+
+<section>
+  <div class="sechead"><span class="n">04</span><h2>Where the model stops being true</h2></div>
+  <p>Every training camera sat in the upper hemisphere, between 7° and 89° elevation. Below that
+  band nothing ever constrained the geometry, so the underside of the baseplate is reconstruction
+  garbage — not a renderer bug. The viewer above clamps elevation to the supervised range, which
+  is why you cannot tip it under the model. A splat is only valid where a camera looked.</p>
+</section>
+</div>
+
+<script>
+(function(){
+"use strict";
+const N_TOTAL=__SPLAT_N__, COV_SCALE=__COV_SCALE__, CENTRE=__CENTRE__;
+const B64="__SPLAT_B64__";
+const FOV=0.6911112070083618, BLUR=0.3;
+const EL_MIN=8*Math.PI/180, EL_MAX=78*Math.PI/180;
+
+/* ---- unpack: 28 bytes per splat -> RGBA32F texture, 3 texels each ---- */
+function f16(h){
+  const s=(h&0x8000)?-1:1, e=(h>>10)&0x1f, m=h&0x3ff;
+  if(e===0) return s*m*5.960464477539063e-8;
+  if(e===31) return m?NaN:s*Infinity;
+  return s*Math.pow(2,e-15)*(1+m/1024);
+}
+const bin=atob(B64), raw=new Uint8Array(bin.length);
+for(let i=0;i<bin.length;i++) raw[i]=bin.charCodeAt(i);
+const dv=new DataView(raw.buffer);
+/* 4 texels per splat. An earlier version squeezed rgb into a single float as
+   r + g*256 + b*65536 to save a texel; the blue byte came back as zero, so
+   colour is stored as plain floats instead. Costs ~0.7 MB of texture and
+   removes a whole class of precision bug. */
+const TEXW=2048, texels=N_TOTAL*4, TEXH=Math.ceil(texels/TEXW);
+const tex=new Float32Array(TEXW*TEXH*4);
+const px=new Float32Array(N_TOTAL), py=new Float32Array(N_TOTAL), pz=new Float32Array(N_TOTAL);
+for(let i=0;i<N_TOTAL;i++){
+  const o=i*28, t=i*16;
+  const x=dv.getFloat32(o,true), y=dv.getFloat32(o+4,true), z=dv.getFloat32(o+8,true);
+  px[i]=x; py[i]=y; pz[i]=z;
+  const c=[];
+  for(let k=0;k<6;k++) c.push(f16(dv.getUint16(o+12+k*2,true))/COV_SCALE);
+  tex[t]=x; tex[t+1]=y; tex[t+2]=z; tex[t+3]=raw[o+27]/255;
+  tex[t+4]=c[0]; tex[t+5]=c[1]; tex[t+6]=c[2]; tex[t+7]=c[3];
+  tex[t+8]=c[4]; tex[t+9]=c[5]; tex[t+10]=0; tex[t+11]=0;
+  tex[t+12]=raw[o+24]/255; tex[t+13]=raw[o+25]/255; tex[t+14]=raw[o+26]/255; tex[t+15]=0;
+}
+
+const cv=document.getElementById("gl");
+const gl=cv.getContext("webgl2",{antialias:false,alpha:false,premultipliedAlpha:false});
+const boot=document.getElementById("boot");
+if(!gl){ boot.textContent="WebGL2 unavailable in this browser"; return; }
+
+const VS=`#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D uData; uniform mat4 uView;
+uniform vec2 uFocal; uniform vec2 uVP; uniform int uTexW;
+in vec2 aQuad; in uint aIdx;
+out vec4 vCol; out vec2 vOff;
+vec4 fetch(int i){ return texelFetch(uData, ivec2(i%uTexW, i/uTexW), 0); }
+void main(){
+  int b=int(aIdx)*4;
+  vec4 d0=fetch(b), d1=fetch(b+1), d2=fetch(b+2), d3=fetch(b+3);
+  vec4 cam=uView*vec4(d0.xyz,1.0);
+  if(cam.z<0.06){ gl_Position=vec4(0.0,0.0,2.0,1.0); return; }
+  vec2 ctr=vec2(uFocal.x*cam.x/cam.z, uFocal.y*cam.y/cam.z);
+  mat3 S=mat3(d1.x,d1.y,d1.z, d1.y,d1.w,d2.x, d1.z,d2.x,d2.y);
+  mat3 W=mat3(uView);
+  float iz=1.0/cam.z;
+  vec3 J0=vec3(uFocal.x*iz,0.0,-uFocal.x*cam.x*iz*iz);
+  vec3 J1=vec3(0.0,uFocal.y*iz,-uFocal.y*cam.y*iz*iz);
+  vec3 T0=vec3(dot(J0,W[0]),dot(J0,W[1]),dot(J0,W[2]));
+  vec3 T1=vec3(dot(J1,W[0]),dot(J1,W[1]),dot(J1,W[2]));
+  float a=dot(T0,S*T0)+${BLUR.toFixed(1)};
+  float bb=dot(T0,S*T1);
+  float c=dot(T1,S*T1)+${BLUR.toFixed(1)};
+  float mid=0.5*(a+c), det=a*c-bb*bb;
+  float rad=sqrt(max(mid*mid-det,0.0));
+  float l1=mid+rad, l2=max(mid-rad,0.0);
+  if(l1<0.12){ gl_Position=vec4(0.0,0.0,2.0,1.0); return; }
+  vec2 dir = (abs(bb)<1e-9) ? (a>=c?vec2(1.0,0.0):vec2(0.0,1.0)) : normalize(vec2(bb,l1-a));
+  // generous clamp: zoomed right in, a single splat legitimately fills the view
+  vec2 ax1=min(sqrt(l1),1600.0)*dir;
+  vec2 ax2=min(sqrt(l2),1600.0)*vec2(-dir.y,dir.x);
+  vec2 pos=ctr + 3.0*(aQuad.x*ax1 + aQuad.y*ax2);
+  vCol=vec4(d3.rgb, d0.w); vOff=aQuad*3.0;
+  gl_Position=vec4(pos.x/(uVP.x*0.5), -pos.y/(uVP.y*0.5), 0.0, 1.0);
+}`;
+const FS=`#version 300 es
+precision highp float;
+uniform int uMode;
+in vec4 vCol; in vec2 vOff; out vec4 o;
+void main(){
+  float r2=dot(vOff,vOff);
+  float A;
+  if(uMode==0){
+    // the real thing: alpha = opacity * exp(-0.5 * d^T Sigma'^-1 d)
+    A=vCol.a*exp(-0.5*r2);
+  } else if(uMode==1){
+    // hard-edged ellipse at 2 sigma - makes each splat a discrete disc
+    if(r2>4.0) discard;
+    A=max(vCol.a,0.55);
+  } else {
+    // just the 2-sigma rim, so you see the ellipses as outlines
+    float d=sqrt(r2);
+    if(d<1.72||d>2.0) discard;
+    A=0.85;
+  }
+  if(A<0.0035) discard;
+  o=vec4(vCol.rgb*A, A);
+}`;
+function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);
+  if(!gl.getShaderParameter(x,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(x));return x;}
+const prog=gl.createProgram();
+try{
+  gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));
+  gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(prog));
+}catch(e){ boot.textContent="shader error: "+e.message; return; }
+gl.useProgram(prog);
+
+const t=gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D,t);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,TEXW,TEXH,0,gl.RGBA,gl.FLOAT,tex);
+gl.uniform1i(gl.getUniformLocation(prog,"uData"),0);
+gl.uniform1i(gl.getUniformLocation(prog,"uTexW"),TEXW);
+const uView=gl.getUniformLocation(prog,"uView"),
+      uFocal=gl.getUniformLocation(prog,"uFocal"), uVP=gl.getUniformLocation(prog,"uVP"),
+      uMode=gl.getUniformLocation(prog,"uMode");
+
+const quad=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,quad);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1]),gl.STATIC_DRAW);
+const aQuad=gl.getAttribLocation(prog,"aQuad");
+gl.enableVertexAttribArray(aQuad); gl.vertexAttribPointer(aQuad,2,gl.FLOAT,false,0,0);
+
+const idxBuf=gl.createBuffer();
+const aIdx=gl.getAttribLocation(prog,"aIdx");
+gl.bindBuffer(gl.ARRAY_BUFFER,idxBuf);
+gl.bufferData(gl.ARRAY_BUFFER,N_TOTAL*4,gl.DYNAMIC_DRAW);
+gl.enableVertexAttribArray(aIdx);
+gl.vertexAttribIPointer(aIdx,1,gl.UNSIGNED_INT,0,0);
+gl.vertexAttribDivisor(aIdx,1);
+
+gl.disable(gl.DEPTH_TEST);
+gl.enable(gl.BLEND);
+gl.blendFuncSeparate(gl.ONE,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+
+/* ---- camera ---- */
+let az=0.7, el=38*Math.PI/180, rad=4.03, budget=N_TOTAL, light=true, mode=0;
+const MODES=["gaussian","discs","outlines"];
+const tgt=[CENTRE[0],CENTRE[1],CENTRE[2]];
+const view=new Float32Array(16);
+function buildView(){
+  const ce=Math.cos(el), eye=[tgt[0]+rad*ce*Math.cos(az), tgt[1]+rad*ce*Math.sin(az),
+                             tgt[2]+rad*Math.sin(el)];
+  let f=[tgt[0]-eye[0],tgt[1]-eye[1],tgt[2]-eye[2]];
+  const fl=Math.hypot(f[0],f[1],f[2]); f=[f[0]/fl,f[1]/fl,f[2]/fl];
+  const up=[0,0,1];
+  let r=[f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]];
+  const rl=Math.hypot(r[0],r[1],r[2])||1; r=[r[0]/rl,r[1]/rl,r[2]/rl];
+  const d=[f[1]*r[2]-f[2]*r[1], f[2]*r[0]-f[0]*r[2], f[0]*r[1]-f[1]*r[0]];
+  const tx=-(r[0]*eye[0]+r[1]*eye[1]+r[2]*eye[2]);
+  const ty=-(d[0]*eye[0]+d[1]*eye[1]+d[2]*eye[2]);
+  const tz=-(f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]);
+  view[0]=r[0];view[1]=d[0];view[2]=f[0];view[3]=0;
+  view[4]=r[1];view[5]=d[1];view[6]=f[1];view[7]=0;
+  view[8]=r[2];view[9]=d[2];view[10]=f[2];view[11]=0;
+  view[12]=tx;view[13]=ty;view[14]=tz;view[15]=1;
+}
+
+/* ---- depth sort: 16-bit counting sort, far to near ---- */
+const order=new Uint32Array(N_TOTAL), depth=new Int32Array(N_TOTAL);
+const counts=new Uint32Array(65536), starts=new Uint32Array(65536);
+let sortMs=0;
+function sortSplats(n){
+  const t0=performance.now();
+  const m2=view[2],m6=view[6],m10=view[10],m14=view[14];
+  let lo=Infinity,hi=-Infinity;
+  for(let i=0;i<n;i++){
+    const z=m2*px[i]+m6*py[i]+m10*pz[i]+m14;
+    depth[i]=z; if(z<lo)lo=z; if(z>hi)hi=z;
+  }
+  const sc=hi>lo?65535/(hi-lo):0;
+  counts.fill(0);
+  for(let i=0;i<n;i++){
+    const b=((m2*px[i]+m6*py[i]+m10*pz[i]+m14)-lo)*sc|0;
+    depth[i]=b; counts[b]++;
+  }
+  let acc=0;
+  for(let b=65535;b>=0;b--){ starts[b]=acc; acc+=counts[b]; }
+  for(let i=0;i<n;i++) order[starts[depth[i]]++]=i;
+  sortMs=performance.now()-t0;
+}
+
+/* ---- interaction ---- */
+const hint=document.getElementById("hint");
+let dragging=false,lx=0,ly=0,touched=false,idle=0;
+function markUsed(){ if(!touched){touched=true; hint.style.opacity="0";} }
+cv.addEventListener("pointerdown",e=>{dragging=true;lx=e.clientX;ly=e.clientY;
+  cv.setPointerCapture(e.pointerId);markUsed();});
+cv.addEventListener("pointermove",e=>{
+  if(!dragging)return;
+  az-=(e.clientX-lx)*0.0062;
+  el=Math.min(EL_MAX,Math.max(EL_MIN,el+(e.clientY-ly)*0.0045));
+  lx=e.clientX;ly=e.clientY;
+});
+addEventListener("pointerup",()=>{dragging=false;});
+// zoom is multiplicative, so it stays controllable all the way in to 0.22,
+// which is close enough to resolve single gaussians
+cv.addEventListener("wheel",e=>{e.preventDefault();markUsed();
+  rad=Math.min(9,Math.max(0.22,rad*(1+Math.sign(e.deltaY)*0.08)));},{passive:false});
+document.getElementById("budget").addEventListener("input",e=>{budget=+e.target.value;});
+document.getElementById("reset").addEventListener("click",()=>{az=0.7;el=38*Math.PI/180;rad=4.03;});
+const gb=document.getElementById("ground");
+gb.addEventListener("click",()=>{light=!light;gb.textContent="Ground: "+(light?"white":"slate");});
+const mb=document.getElementById("mode");
+mb.addEventListener("click",()=>{mode=(mode+1)%3;mb.textContent="Shape: "+MODES[mode];});
+const zi=document.getElementById("zoomin"), zo=document.getElementById("zoomout");
+zi.addEventListener("click",()=>{markUsed();rad=Math.max(0.22,rad*0.72);});
+zo.addEventListener("click",()=>{rad=Math.min(9,rad/0.72);});
+
+const rN=document.getElementById("r-n"), rF=document.getElementById("r-fps"),
+      rA=document.getElementById("r-az"), rE=document.getElementById("r-el"),
+      rS=document.getElementById("r-sort"), rR=document.getElementById("r-rad");
+const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
+
+function resize(){
+  const d=Math.min(devicePixelRatio||1,1.75);
+  const w=Math.round(cv.clientWidth*d), h=Math.round(cv.clientHeight*d);
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
+}
+let frames=0,last=performance.now(),fps=0;
+
+/* One synchronous draw. Kept separate from the rAF loop so the canvas is
+   never blank: requestAnimationFrame does not fire while a tab is hidden,
+   so a page opened in a background tab would otherwise show nothing until
+   it was focused. */
+function draw(){
+  const n=Math.min(budget,N_TOTAL);
+  sortSplats(n);
+  gl.bindBuffer(gl.ARRAY_BUFFER,idxBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER,0,order,0,n);
+  gl.viewport(0,0,cv.width,cv.height);
+  if(light) gl.clearColor(1,1,1,1); else gl.clearColor(0.102,0.129,0.161,1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  const fx=0.5*cv.width/Math.tan(0.5*FOV);
+  gl.uniformMatrix4fv(uView,false,view);
+  gl.uniform2f(uFocal,fx,fx);
+  gl.uniform2f(uVP,cv.width,cv.height);
+  gl.uniform1i(uMode,mode);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.drawArraysInstanced(gl.TRIANGLES,0,6,n);
+  return n;
+}
+
+function frame(now){
+  resize();
+  if(!dragging&&!reduce) az+=0.0016;
+  buildView();
+  const n=draw();
+  frames++;
+  if(now-last>500){
+    fps=frames*1000/(now-last); frames=0; last=now;
+    rF.textContent=fps.toFixed(0);
+    rN.textContent=n.toLocaleString();
+    rA.textContent=((az*180/Math.PI)%360+360).toFixed(0).padStart(3,"0")+"°";
+    rE.textContent=(el*180/Math.PI).toFixed(0)+"°";
+    rS.textContent=sortMs.toFixed(1)+" ms";
+    rR.textContent=rad.toFixed(2);
+  }
+  requestAnimationFrame(frame);
+}
+boot.style.display="none";
+/* paint once immediately, then start the animation loop */
+resize(); buildView(); draw();
+rN.textContent=Math.min(budget,N_TOTAL).toLocaleString();
+rS.textContent=sortMs.toFixed(1)+" ms";
+rR.textContent=rad.toFixed(2);
+rA.textContent=((az*180/Math.PI)%360+360).toFixed(0).padStart(3,"0")+"°";
+rE.textContent=(el*180/Math.PI).toFixed(0)+"°";
+window.__splat={draw:()=>{resize();buildView();return draw();},gl:gl,canvas:cv};
+document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden){resize();buildView();draw();}
+});
+requestAnimationFrame(frame);
+
+/* ---- comparison slider ---- */
+const clip=document.getElementById("clip"), sl=document.getElementById("slider");
+sl.addEventListener("input",()=>{clip.style.width=sl.value+"%";});
+})();
+</script>
